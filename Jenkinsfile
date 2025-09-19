@@ -161,9 +161,27 @@ pipeline {
             lbHost = sh(script: "kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}'", returnStdout: true).trim()
           }
           env.INGRESS_LB_HOST = lbHost
-          env.INGRESS_LB_IP   = sh(script: "getent hosts ${lbHost} | awk '{print \$1}' | head -n1 || dig +short ${lbHost} | head -n1", returnStdout: true).trim()
-
-          def ip = env.INGRESS_LB_IP
+          
+          // Try multiple methods to resolve IP
+          def ip = ""
+          try {
+            ip = sh(script: "getent hosts ${lbHost} | awk '{print \$1}' | head -n1", returnStdout: true).trim()
+          } catch (Exception e1) {
+            try {
+              ip = sh(script: "dig +short ${lbHost} | head -n1", returnStdout: true).trim()
+            } catch (Exception e2) {
+              try {
+                ip = sh(script: "nslookup ${lbHost} | grep 'Address:' | tail -1 | awk '{print \$2}'", returnStdout: true).trim()
+              } catch (Exception e3) {
+                // Fallback: wait for load balancer to be ready
+                echo "DNS resolution failed, waiting for load balancer..."
+                sleep 30
+                ip = sh(script: "dig +short ${lbHost} | head -n1", returnStdout: true).trim()
+              }
+            }
+          }
+          
+          env.INGRESS_LB_IP = ip
           def devHost  = params.DEV_HOSTNAME  == 'auto' ? "dev.${ip}.nip.io"  : params.DEV_HOSTNAME
           def prodHost = params.PROD_HOSTNAME == 'auto' ? "prod.${ip}.nip.io" : params.PROD_HOSTNAME
           env.DEV_HOST  = devHost
